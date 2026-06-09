@@ -841,10 +841,21 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		fileLength,
 	)
 
-	// Send webhook for incoming messages
-	// Forward self-messages when FORWARD_SELF=true
-	if content != "" && (forwardSelfMessages || !msg.Info.IsFromMe) {
-		SendWebhook(sender, content, chatJID, msg.Info.IsFromMe, quotedMessageId, quotedSender, quotedContent)
+	// Send webhook for text and document messages.
+	// Forward self-messages when FORWARD_SELF=true.
+	if (content != "" || mediaType == "document") && (forwardSelfMessages || !msg.Info.IsFromMe) {
+		SendWebhook(
+			msg.Info.ID,
+			sender,
+			content,
+			chatJID,
+			msg.Info.IsFromMe,
+			mediaType,
+			filename,
+			quotedMessageId,
+			quotedSender,
+			quotedContent,
+		)
 	}
 
 	if err != nil {
