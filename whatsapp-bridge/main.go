@@ -811,20 +811,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		return
 	}
 
-	// Auto-download media if present
-	if mediaType != "" && url != "" && len(mediaKey) > 0 {
-		logger.Infof("Auto-downloading %s media for message %s", mediaType, msg.Info.ID)
-		go func() {
-			success, _, _, downloadPath, err := downloadMedia(client, messageStore, msg.Info.ID, chatJID)
-			if success && err == nil {
-				logger.Infof("✅ Auto-downloaded media: %s", downloadPath)
-			} else {
-				logger.Warnf("❌ Auto-download failed: %v", err)
-			}
-		}()
-	}
-
-	// Store message in database
+	// Store message in database FIRST, so the auto-download goroutine below can find the row.
 	err = messageStore.StoreMessage(
 		msg.Info.ID,
 		chatJID,
@@ -840,6 +827,23 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		fileEncSHA256,
 		fileLength,
 	)
+
+	// Auto-download media if present — AFTER StoreMessage so the goroutine sees the stored media
+	// keys. Previously this raced StoreMessage and almost always queried before the row existed
+	// ("sql: no rows in result set"), so receipt-time capture failed; the later on-demand
+	// /api/download then hit expired media and returned HTTP 403, silently losing real documents.
+	// Storing first captures the bytes while the media URL is still fresh. Pure capture, no cognition.
+	if err == nil && mediaType != "" && url != "" && len(mediaKey) > 0 {
+		logger.Infof("Auto-downloading %s media for message %s", mediaType, msg.Info.ID)
+		go func() {
+			success, _, _, downloadPath, derr := downloadMedia(client, messageStore, msg.Info.ID, chatJID)
+			if success && derr == nil {
+				logger.Infof("✅ Auto-downloaded media: %s", downloadPath)
+			} else {
+				logger.Warnf("❌ Auto-download failed: %v", derr)
+			}
+		}()
+	}
 
 	// Send webhook for text and document messages.
 	// Forward self-messages when FORWARD_SELF=true.
