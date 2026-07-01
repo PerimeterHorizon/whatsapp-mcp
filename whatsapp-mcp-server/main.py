@@ -1,5 +1,5 @@
+import os
 import signal
-import sys
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -367,8 +367,16 @@ def download_media(message_id: str, chat_jid: str) -> dict[str, Any]:
 
 
 def shutdown_handler(signum, frame):
-    """Handle shutdown signals gracefully to prevent zombie processes."""
-    sys.exit(0)
+    """Exit immediately on signal, skipping interpreter finalization.
+
+    mcp.run(transport="stdio") runs FastMCP's daemon threads that write to
+    stdout. Calling sys.exit(0) here triggers finalization, which tries to
+    flush/close stdout while a writer thread still holds the buffer lock,
+    causing a fatal _enter_buffered_busy abort (SIGABRT). os._exit bypasses
+    finalization entirely, avoiding the race. Nothing needs cleanup here
+    (SQLite reads are per-call).
+    """
+    os._exit(0)
 
 
 if __name__ == "__main__":
