@@ -41,7 +41,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.24"
+          go-version-file: whatsapp-bridge/go.mod
 
       - uses: actions/setup-python@v6
         with:
