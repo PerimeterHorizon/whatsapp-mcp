@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0](https://github.com/PerimeterHorizon/whatsapp-mcp/compare/v0.1.0...v0.1.0) (2026-07-06)
+
+
+### release
+
+* adopt Release Please for automated versioning/changelog ([#15](https://github.com/PerimeterHorizon/whatsapp-mcp/issues/15)) ([6d45958](https://github.com/PerimeterHorizon/whatsapp-mcp/commit/6d45958139effa3079ff27a9708d400f89ba9ddf))
+
+
+### Features
+
+* **bridge:** WhatsApp call events captured and forwarded — CallOffer/Accept/Terminate/group notice stored as [call] rows and webhooked to the bot (annotate flow closes the invisible-call class) ([31be90c](https://github.com/PerimeterHorizon/whatsapp-mcp/commit/31be90c9be372aa7621db10d2ec7ffdf2aaac996))
+
+
+### Bug Fixes
+
+* prevent SIGABRT on shutdown by using os._exit in signal handler ([c7f7ee4](https://github.com/PerimeterHorizon/whatsapp-mcp/commit/c7f7ee43c3cda96641bac5a91683cc857a09ae67))
+* store message before auto-downloading media to avoid receipt-time race ([b591d3e](https://github.com/PerimeterHorizon/whatsapp-mcp/commit/b591d3e1269b93d240c9ea740ed304e34614323c))
+
 ## 0.1.0 (2026-03-02)
 
 ### Added
