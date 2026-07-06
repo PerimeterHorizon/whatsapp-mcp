@@ -1387,6 +1387,17 @@ func main() {
 	// Setup event handling for messages and history sync
 	client.AddEventHandler(func(evt interface{}) {
 		switch v := evt.(type) {
+		case *events.CallOffer:
+			// Call events (Paul, 2026-07-06): calls are deal intelligence — "I already called
+			// Dubi" must be visible to the system. Store + forward; the bot prompts Paul to
+			// annotate. 1:1 incoming calls.
+			handleCallEvent(messageStore, v.BasicCallMeta, "call_offer", logger)
+		case *events.CallAccept:
+			handleCallEvent(messageStore, v.BasicCallMeta, "call_accept", logger)
+		case *events.CallTerminate:
+			handleCallEvent(messageStore, v.BasicCallMeta, "call_end", logger)
+		case *events.CallOfferNotice:
+			handleCallEvent(messageStore, v.BasicCallMeta, "group_call_offer", logger)
 		case *events.Message:
 			// Process regular messages
 			handleMessage(client, messageStore, v, logger)
@@ -1989,4 +2000,25 @@ func placeholderWaveform(duration uint32) []byte {
 	}
 
 	return waveform
+}
+
+
+// handleCallEvent stores a call marker row and forwards it to the bot webhook so calls
+// become visible deal intelligence (annotate flow bot-side). Dedupe on CallID+state via
+// the messages primary key. Mechanical capture only.
+func handleCallEvent(messageStore *MessageStore, meta types.BasicCallMeta, state string, logger waLog.Logger) {
+	chatJID := meta.From.String()
+	peer := meta.CallCreator.String()
+	content := "[call] " + state + " with " + peer
+	msgID := "call-" + meta.CallID + "-" + state
+	err := messageStore.StoreMessage(
+		msgID, chatJID, peer, content, meta.Timestamp,
+		false, // direction best-effort; Paul's annotation supplies truth
+		"call", "", "", nil, nil, nil, 0,
+	)
+	if err != nil {
+		logger.Warnf("call event store failed: %v", err)
+	}
+	SendWebhook(msgID, peer, content, chatJID, false, "call", "", "", "", "")
+	logger.Infof("call event forwarded: %s %s", state, peer)
 }
