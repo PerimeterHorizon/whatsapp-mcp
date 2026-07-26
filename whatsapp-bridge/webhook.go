@@ -11,9 +11,21 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+func init() {
+	// A process restart must resume pending evidence without waiting for another message to arrive.
+	// Unit-test binaries use isolated outboxes explicitly and must not touch the live store.
+	if strings.HasSuffix(os.Args[0], ".test") {
+		return
+	}
+	if _, err := productionWebhookOutbox(); err != nil {
+		fmt.Printf("CRITICAL: webhook outbox did not start: %v\n", err)
+	}
+}
 
 // WebhookPayload represents the source observation sent to OpenClaw.
 type WebhookPayload struct {
