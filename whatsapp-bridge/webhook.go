@@ -19,12 +19,16 @@ import (
 func init() {
 	// A process restart must resume pending evidence without waiting for another message to arrive.
 	// Unit-test binaries use isolated outboxes explicitly and must not touch the live store.
-	if strings.HasSuffix(os.Args[0], ".test") {
+	if isTestBinary() {
 		return
 	}
 	if _, err := productionWebhookOutbox(); err != nil {
 		fmt.Printf("CRITICAL: webhook outbox did not start: %v\n", err)
 	}
+}
+
+func isTestBinary() bool {
+	return strings.HasSuffix(os.Args[0], ".test")
 }
 
 // WebhookPayload represents the source observation sent to OpenClaw.
@@ -98,7 +102,11 @@ func productionWebhookOutbox() (*webhookOutbox, error) {
 		}
 		path := os.Getenv("WEBHOOK_OUTBOX_PATH")
 		if path == "" {
-			path = filepath.Join("store", "webhook-outbox.db")
+			if isTestBinary() {
+				path = filepath.Join(os.TempDir(), fmt.Sprintf("openclaw-whatsapp-webhook-outbox-%d.db", os.Getpid()))
+			} else {
+				path = filepath.Join("store", "webhook-outbox.db")
+			}
 		}
 		defaultOutbox, defaultOutboxErr = openWebhookOutbox(path, url, os.Getenv("WEBHOOK_SECRET"))
 		if defaultOutboxErr == nil {
