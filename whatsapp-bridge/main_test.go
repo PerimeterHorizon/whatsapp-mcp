@@ -64,6 +64,7 @@ func newTestMessageStore(t *testing.T) *MessageStore {
 			media_type TEXT,
 			filename TEXT,
 			url TEXT,
+			direct_path TEXT,
 			media_key BLOB,
 			file_sha256 BLOB,
 			file_enc_sha256 BLOB,
@@ -81,6 +82,105 @@ func newTestMessageStore(t *testing.T) *MessageStore {
 
 func testLogger() waLog.Logger {
 	return waLog.Stdout("Test", "WARN", true)
+}
+
+func TestNormalizeDirectPath(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "whatsapp media url",
+			input: "https://mmg.whatsapp.net/v/t62.7119-24/file.enc?ccb=11-4&oh=abc",
+			want:  "/v/t62.7119-24/file.enc?ccb=11-4&oh=abc",
+		},
+		{
+			name:  "signed direct path",
+			input: "/v/t62.7119-24/file.enc?ccb=11-4&oh=abc",
+			want:  "/v/t62.7119-24/file.enc?ccb=11-4&oh=abc",
+		},
+		{
+			name:  "direct path",
+			input: "/v/t62.7119-24/file.enc",
+			want:  "/v/t62.7119-24/file.enc",
+		},
+		{
+			name:  "bare path",
+			input: "v/t62.7119-24/file.enc",
+			want:  "/v/t62.7119-24/file.enc",
+		},
+		{
+			name:  "empty",
+			input: " ",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeDirectPath(tt.input); got != tt.want {
+				t.Fatalf("normalizeDirectPath(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractMediaInfoPreservesDocumentDirectPath(t *testing.T) {
+	fileLength := uint64(1234)
+	msg := &waProto.Message{
+		DocumentMessage: &waProto.DocumentMessage{
+			URL:           proto.String("https://mmg.whatsapp.net/v/t62.7119-24/file.enc?ccb=11-4"),
+			DirectPath:    proto.String("/v/t62.7119-24/actual-file.enc"),
+			MediaKey:      []byte("media-key"),
+			FileSHA256:    []byte("file-sha"),
+			FileEncSHA256: []byte("file-enc-sha"),
+			FileLength:    proto.Uint64(fileLength),
+			FileName:      proto.String("Marlin_Intelligence_One_Pager.pdf"),
+		},
+	}
+
+	mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, gotFileLength := extractMediaInfo(msg, time.Unix(1783529100, 0))
+
+	if mediaType != "document" {
+		t.Fatalf("mediaType = %q, want document", mediaType)
+	}
+	if filename != "Marlin_Intelligence_One_Pager.pdf" {
+		t.Fatalf("filename = %q", filename)
+	}
+	if url == "" {
+		t.Fatalf("expected URL to be preserved")
+	}
+	if directPath != "/v/t62.7119-24/actual-file.enc" {
+		t.Fatalf("directPath = %q", directPath)
+	}
+	if string(mediaKey) != "media-key" || string(fileSHA256) != "file-sha" || string(fileEncSHA256) != "file-enc-sha" {
+		t.Fatalf("media hashes/keys were not preserved")
+	}
+	if gotFileLength != fileLength {
+		t.Fatalf("fileLength = %d, want %d", gotFileLength, fileLength)
+	}
+}
+
+func TestGetMediaInfoHandlesNullDirectPath(t *testing.T) {
+	ms := newTestMessageStore(t)
+	_, err := ms.db.Exec(`
+		INSERT INTO chats (jid, name, last_message_time) VALUES
+			('chat@s.whatsapp.net', 'Chat', '2026-07-09T10:00:00Z');
+		INSERT INTO messages (id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length) VALUES
+			('msg-1', 'chat@s.whatsapp.net', 'sender', '', '2026-07-09T10:00:00Z', 0, 'document', 'doc.pdf', 'https://mmg.whatsapp.net/v/t62/file.enc?oh=abc', X'01', X'02', X'03', 10);
+	`)
+	if err != nil {
+		t.Fatalf("failed to seed message: %v", err)
+	}
+
+	_, _, _, directPath, _, _, _, _, err := ms.GetMediaInfo("msg-1", "chat@s.whatsapp.net")
+	if err != nil {
+		t.Fatalf("GetMediaInfo failed: %v", err)
+	}
+	if directPath != "" {
+		t.Fatalf("directPath = %q, want empty string for legacy NULL", directPath)
+	}
 }
 
 // buildTextMessage constructs an events.Message with the given source fields.

@@ -38,6 +38,7 @@ type WebhookPayload struct {
 	Content         string `json:"content"`
 	ChatJID         string `json:"chatJID"`
 	IsFromMe        bool   `json:"isFromMe"`
+	Timestamp       string `json:"timestamp,omitempty"`
 	MediaType       string `json:"mediaType,omitempty"`
 	Filename        string `json:"filename,omitempty"`
 	QuotedMessageId string `json:"quotedMessageId,omitempty"`
@@ -241,7 +242,7 @@ func (o *webhookOutbox) post(body []byte) error {
 
 // SendWebhook durably records a source observation before attempting delivery.
 // Delivery retries are transport work only; they never invoke a paid brain turn.
-func SendWebhook(messageID, sender, content, chatJID string, isFromMe bool, mediaType, filename, quotedMessageId, quotedSender, quotedContent string) {
+func SendWebhook(messageID, sender, content, chatJID string, isFromMe bool, timestamp time.Time, mediaType, filename, quotedMessageId, quotedSender, quotedContent string) {
 	outbox, err := productionWebhookOutbox()
 	if err != nil {
 		fmt.Printf("CRITICAL: webhook observation was not queued: %v\n", err)
@@ -253,6 +254,7 @@ func SendWebhook(messageID, sender, content, chatJID string, isFromMe bool, medi
 		Content:         content,
 		ChatJID:         chatJID,
 		IsFromMe:        isFromMe,
+		Timestamp:       providerTimestamp(timestamp),
 		MediaType:       mediaType,
 		Filename:        filename,
 		QuotedMessageId: quotedMessageId,
@@ -262,6 +264,15 @@ func SendWebhook(messageID, sender, content, chatJID string, isFromMe bool, medi
 	if err != nil {
 		fmt.Printf("CRITICAL: webhook observation was not queued: %v\n", err)
 	}
+}
+
+// providerTimestamp carries WhatsApp's own send time, so a message delivered late
+// (offline queue, reconnect) keeps the time it was actually sent.
+func providerTimestamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // In main.go, handleMessage forwards webhooks for messages with text content.
