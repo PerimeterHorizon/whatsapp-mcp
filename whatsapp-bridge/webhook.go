@@ -44,6 +44,16 @@ type WebhookPayload struct {
 	QuotedMessageId string `json:"quotedMessageId,omitempty"`
 	QuotedSender    string `json:"quotedSender,omitempty"`
 	QuotedContent   string `json:"quotedContent,omitempty"`
+	// Observed context the bot could not previously see (2026-10-13): the chat's display name,
+	// who actually spoke (full JID, phone when known, push name) and, for a group, the roster
+	// WhatsApp reports at the moment of capture. Absent fields mean "not observed", never "none".
+	ChatName         string               `json:"chatName,omitempty"`
+	IsGroup          bool                 `json:"isGroup,omitempty"`
+	SenderJID        string               `json:"senderJid,omitempty"`
+	SenderPhone      string               `json:"senderPhone,omitempty"`
+	SenderPushName   string               `json:"senderPushName,omitempty"`
+	Participants     []WebhookParticipant `json:"participants,omitempty"`
+	RosterObservedAt string               `json:"rosterObservedAt,omitempty"`
 }
 
 type webhookOutbox struct {
@@ -243,12 +253,7 @@ func (o *webhookOutbox) post(body []byte) error {
 // SendWebhook durably records a source observation before attempting delivery.
 // Delivery retries are transport work only; they never invoke a paid brain turn.
 func SendWebhook(messageID, sender, content, chatJID string, isFromMe bool, timestamp time.Time, mediaType, filename, quotedMessageId, quotedSender, quotedContent string) {
-	outbox, err := productionWebhookOutbox()
-	if err != nil {
-		fmt.Printf("CRITICAL: webhook observation was not queued: %v\n", err)
-		return
-	}
-	err = outbox.enqueue(WebhookPayload{
+	SendWebhookPayload(WebhookPayload{
 		MessageID:       messageID,
 		Sender:          sender,
 		Content:         content,
@@ -261,7 +266,17 @@ func SendWebhook(messageID, sender, content, chatJID string, isFromMe bool, time
 		QuotedSender:    quotedSender,
 		QuotedContent:   quotedContent,
 	})
+}
+
+// SendWebhookPayload durably records a fully described observation (sender identity, chat
+// name, group roster) before attempting delivery.
+func SendWebhookPayload(payload WebhookPayload) {
+	outbox, err := productionWebhookOutbox()
 	if err != nil {
+		fmt.Printf("CRITICAL: webhook observation was not queued: %v\n", err)
+		return
+	}
+	if err := outbox.enqueue(payload); err != nil {
 		fmt.Printf("CRITICAL: webhook observation was not queued: %v\n", err)
 	}
 }

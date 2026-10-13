@@ -860,19 +860,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	// Send webhook for text and document messages.
 	// Forward self-messages when FORWARD_SELF=true.
 	if (content != "" || mediaType == "document") && (forwardSelfMessages || !msg.Info.IsFromMe) {
-		SendWebhook(
-			msg.Info.ID,
-			sender,
-			content,
-			chatJID,
-			msg.Info.IsFromMe,
-			msg.Info.Timestamp,
-			mediaType,
-			filename,
-			quotedMessageId,
-			quotedSender,
-			quotedContent,
-		)
+		SendWebhookPayload(describeObservation(client, msg, resolvedChat, name, sender, content, chatJID, mediaType, filename, quotedMessageId, quotedSender, quotedContent, logger))
 	}
 
 	if err != nil {
@@ -892,6 +880,46 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 			fmt.Printf("[%s] %s %s: %s\n", timestamp, direction, sender, content)
 		}
 	}
+}
+
+// describeObservation assembles the webhook payload with everything this device can observe
+// about the message: the chat's display name, who spoke (JID, phone, push name) and, for a
+// group, the roster WhatsApp reports now. A roster read failure is logged and the message is
+// forwarded without one; the bot records that membership was not observed.
+func describeObservation(client *whatsmeow.Client, msg *events.Message, chat types.JID, chatName, sender, content, chatJID, mediaType, filename, quotedMessageId, quotedSender, quotedContent string, logger waLog.Logger) WebhookPayload {
+	ctx := context.Background()
+	senderJID, senderPhone, senderPushName := senderIdentity(ctx, client, msg.Info)
+	payload := WebhookPayload{
+		MessageID:       msg.Info.ID,
+		Sender:          sender,
+		Content:         content,
+		ChatJID:         chatJID,
+		IsFromMe:        msg.Info.IsFromMe,
+		Timestamp:       providerTimestamp(msg.Info.Timestamp),
+		MediaType:       mediaType,
+		Filename:        filename,
+		QuotedMessageId: quotedMessageId,
+		QuotedSender:    quotedSender,
+		QuotedContent:   quotedContent,
+		ChatName:        strings.TrimSpace(chatName),
+		IsGroup:         chat.Server == types.GroupServer,
+		SenderJID:       senderJID,
+		SenderPhone:     senderPhone,
+		SenderPushName:  senderPushName,
+	}
+	if payload.IsGroup {
+		roster, err := groupRoster(ctx, client, chat)
+		if err != nil {
+			logger.Warnf("Group roster not observed for %s: %v", chatJID, err)
+		} else {
+			if payload.ChatName == "" || payload.ChatName == "Group "+chat.User {
+				payload.ChatName = roster.Name
+			}
+			payload.Participants = roster.Participants
+			payload.RosterObservedAt = roster.ObservedAt.Format(time.RFC3339)
+		}
+	}
+	return payload
 }
 
 // DownloadMediaRequest represents the request body for the download media API
@@ -1155,6 +1183,39 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 		_ = json.NewEncoder(w).Encode(status)
+	})
+
+	// Group roster on demand: the bot sweeps known groups so membership is on record before
+	// the next message arrives, not only after it.
+	http.HandleFunc("/api/group-info", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			ChatJID string `json:"chat_jid"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.ChatJID) == "" {
+			http.Error(w, "chat_jid is required", http.StatusBadRequest)
+			return
+		}
+		jid, err := types.ParseJID(strings.TrimSpace(req.ChatJID))
+		if err != nil || jid.Server != types.GroupServer {
+			http.Error(w, "chat_jid must be a group jid", http.StatusBadRequest)
+			return
+		}
+		invalidateRoster(jid)
+		roster, err := groupRoster(r.Context(), client, jid)
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": err.Error()})
+			return
+		}
+		if roster.Name != "" {
+			_ = messageStore.StoreChat(jid.String(), roster.Name, roster.ObservedAt)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "roster": roster})
 	})
 
 	// Handler for sending messages
@@ -1443,6 +1504,13 @@ func main() {
 		case *events.Message:
 			// Process regular messages
 			handleMessage(client, messageStore, v, logger)
+
+		case *events.GroupInfo:
+			// Membership or subject changed: the next message re-reads the roster.
+			invalidateRoster(v.JID)
+			if v.Name != nil && strings.TrimSpace(v.Name.Name) != "" {
+				_ = messageStore.StoreChat(v.JID.String(), strings.TrimSpace(v.Name.Name), v.Timestamp)
+			}
 
 		case *events.HistorySync:
 			// Process history sync events
